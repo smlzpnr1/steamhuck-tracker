@@ -1,48 +1,33 @@
-# 🥏 Steamhuck Challenge Tracker - Kurulum Rehberi
+# 🥏 Steamhuck Tracker - Kurulum Rehberi
 
-## 🎯 Sistem Özellikleri
-
-### Puan Tablosu
-| Antrenman | Puan |
-|-----------|------|
-| SH Antrenmanı | 4 |
-| Ultimate-specific Alt Vücut/Core/HIIT | 3 |
-| Koşu (5km+) / Bisiklet (10km+) / Plyometrics / Sprint | 3 |
-| Farklı Takım Frizbi Antrenmanı | 2 |
-| Üst Vücut Antrenmanı | 2 |
-| Disk Atma | 2 |
-| Farklı Spor Dalı | 1 |
-| Yoga / Pilates / Mobility | 1 |
-
-### Etiketleme Sistemi 🎯
-- Antrenman sonrası rakip takımdan birini etiketleyebilirsin
-- Etiketlenen kişi 48 saat içinde 2+ puan yapmalı
-- Yapmazsa: **-3 puan**
-- Yaparsa: **+1 puan** bonus
-- Aynı kişi 48 saat içinde tekrar etiketlenemez
-
-### Haftalık Minimum ⚠️
-- Haftada minimum **6 puan** toplanmalı
-- Altında kalırsan: **-3 puan** ceza
-
-### 2 Haftalık Dönem
-- Dönem sonunda kazanan takımın en çok puanlı oyuncusuna ödül
-- Sonraki dönemin kaptanları: En çok puan alan 2 kişi
+Bu rehber, uygulamanı sıfırdan canlıya almanı sağlayacak. Toplam süre: ~15 dakika.
 
 ---
 
-## 🚀 KURULUM (15 dakika)
+## 📋 Adım 1: Supabase Kurulumu (5 dakika)
 
-### ADIM 1: Supabase Veritabanı
+### 1.1 Hesap Oluştur
+1. **[supabase.com](https://supabase.com)** adresine git
+2. **"Start your project"** butonuna tıkla
+3. **GitHub ile giriş yap** (en kolay yöntem)
 
-1. [supabase.com](https://supabase.com)'a git, ücretsiz hesap aç
-2. "New Project" → İsim: `steamhuck-tracker`
-3. Şifre belirle, Frankfurt region seç
-4. **SQL Editor**'a git, şu kodu çalıştır:
+### 1.2 Yeni Proje Oluştur
+1. **"New Project"** butonuna tıkla
+2. Ayarları gir:
+   - **Name:** `steamhuck-tracker`
+   - **Database Password:** Güçlü bir şifre belirle (kaydet!)
+   - **Region:** `Frankfurt (eu-central-1)` - Türkiye'ye en yakın
+3. **"Create new project"** tıkla
+4. 2-3 dakika bekle (veritabanı hazırlanıyor)
+
+### 1.3 Veritabanı Tablolarını Oluştur
+1. Sol menüden **"SQL Editor"** tıkla
+2. **"New query"** tıkla
+3. Aşağıdaki SQL kodunu yapıştır:
 
 ```sql
--- Workouts Tablosu
-CREATE TABLE IF NOT EXISTS workouts (
+-- Workouts (Antrenmanlar) Tablosu
+CREATE TABLE workouts (
   id BIGSERIAL PRIMARY KEY,
   user_name TEXT NOT NULL,
   workout_type TEXT NOT NULL,
@@ -50,82 +35,148 @@ CREATE TABLE IF NOT EXISTS workouts (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Tags (Etiketleme) Tablosu
-CREATE TABLE IF NOT EXISTS tags (
+-- Tags (Etiketlemeler) Tablosu
+CREATE TABLE tags (
   id BIGSERIAL PRIMARY KEY,
   tagger_user TEXT NOT NULL,
   target_user TEXT NOT NULL,
   status TEXT DEFAULT 'pending',
+  resolved_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Weekly Goals Tablosu
-CREATE TABLE IF NOT EXISTS weekly_goals (
-  id BIGSERIAL PRIMARY KEY,
-  user_name TEXT NOT NULL,
-  week_number INTEGER NOT NULL,
-  goal_id TEXT NOT NULL,
-  completed BOOLEAN DEFAULT FALSE,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- RLS Politikaları
+-- RLS (Row Level Security) Politikaları
 ALTER TABLE workouts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tags ENABLE ROW LEVEL SECURITY;
-ALTER TABLE weekly_goals ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Enable all" ON workouts FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Enable all" ON tags FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Enable all" ON weekly_goals FOR ALL USING (true) WITH CHECK (true);
+-- Herkesin okuma/yazma yapabilmesi için
+CREATE POLICY "Enable all for workouts" ON workouts FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Enable all for tags" ON tags FOR ALL USING (true) WITH CHECK (true);
 ```
 
-5. **Project Settings → API** bölümünden kopyala:
-   - Project URL
-   - anon public key
+4. **"Run"** butonuna tıkla (yeşil play butonu)
+5. **"Success"** mesajını gör ✅
+
+### 1.4 API Anahtarlarını Al
+1. Sol menüden **"Project Settings"** (⚙️ dişli ikon) tıkla
+2. **"API"** sekmesine git
+3. Şu iki değeri kopyala ve bir yere kaydet:
+
+| Değer | Örnek |
+|-------|-------|
+| **Project URL** | `https://abcdefgh.supabase.co` |
+| **anon public key** | `eyJhbGciOiJIUzI1NiIs...` (uzun bir metin) |
 
 ---
 
-### ADIM 2: GitHub'a Yükle
+## 📋 Adım 2: GitHub'a Yükle (3 dakika)
 
-1. [github.com](https://github.com)'da yeni repo oluştur: `steamhuck-tracker`
-2. Tüm dosyaları yükle
+### 2.1 GitHub Hesabı
+1. **[github.com](https://github.com)** adresine git
+2. Hesabın yoksa oluştur (ücretsiz)
+
+### 2.2 Yeni Repo Oluştur
+1. Sağ üstteki **"+"** butonuna tıkla
+2. **"New repository"** seç
+3. Ayarları gir:
+   - **Repository name:** `steamhuck-tracker`
+   - **Public** seç
+4. **"Create repository"** tıkla
+
+### 2.3 Dosyaları Yükle
+1. Açılan sayfada **"uploading an existing file"** linkine tıkla
+2. ZIP dosyasını aç ve TÜM dosyaları sürükle-bırak yap:
+   - `package.json`
+   - `vite.config.js`
+   - `tailwind.config.js`
+   - `postcss.config.js`
+   - `index.html`
+   - `src/` klasörü (içindekilerle birlikte)
+   - `public/` klasörü
+3. **"Commit changes"** tıkla
 
 ---
 
-### ADIM 3: Vercel'e Deploy
+## 📋 Adım 3: Vercel'e Yayınla (5 dakika)
 
-1. [vercel.com](https://vercel.com)'a git, GitHub ile giriş yap
-2. "Import Project" → `steamhuck-tracker` seç
-3. Environment Variables ekle:
-   - `VITE_SUPABASE_URL` = Project URL
-   - `VITE_SUPABASE_ANON_KEY` = anon key
-4. "Deploy" tıkla
+### 3.1 Vercel Hesabı
+1. **[vercel.com](https://vercel.com)** adresine git
+2. **"Sign Up"** tıkla
+3. **"Continue with GitHub"** seç
+
+### 3.2 Projeyi İçe Aktar
+1. **"Add New..."** → **"Project"** tıkla
+2. GitHub repoların listelenecek
+3. `steamhuck-tracker` yanındaki **"Import"** tıkla
+
+### 3.3 Environment Variables Ekle (ÖNEMLİ!)
+1. **"Environment Variables"** bölümünü aç
+2. Şu değişkenleri ekle:
+
+| NAME | VALUE |
+|------|-------|
+| `VITE_SUPABASE_URL` | `https://abcdefgh.supabase.co` (senin URL'n) |
+| `VITE_SUPABASE_ANON_KEY` | `eyJhbGciOiJIUzI1NiIs...` (senin key'in) |
+
+3. Her birini ekledikten sonra **"Add"** tıkla
+
+### 3.4 Yayınla
+1. **"Deploy"** butonuna tıkla
+2. 1-2 dakika bekle
+3. Yeşil tik görünce tamamdır! ✅
+4. Verilen URL'yi kopyala (örn: `steamhuck-tracker.vercel.app`)
 
 ---
 
-## ✅ TAMAMLANDI!
+## 🎉 TAMAMLANDI!
 
-Artık `steamhuck-tracker.vercel.app` adresinde canlı!
+Artık kendi web siten var! URL'yi takım arkadaşlarınla paylaş.
 
-### İlk Takımlar:
-**💚 Emir'in Takımı:** Emir, Simay, Kağan, İrem, Ayşenur, Tuti, Bilgecan, Aytaç, Ece, Deniz, Şevval
-
-**💙 Ceyhun'un Takımı:** Ceyhun, Efza, Tarık Zadil, Elif, Hüseyin, Azra, Emre, Şamil, Dilara, Aliberk, Şeyma
+**Site adresi:** `https://steamhuck-tracker.vercel.app` (veya Vercel'in verdiği adres)
 
 ---
 
-## 📱 Telefona Ekle
+## 📱 Telefona Uygulama Gibi Ekle
 
-**iPhone:** Safari → Paylaş → "Ana Ekrana Ekle"
-**Android:** Chrome → Menü → "Ana ekrana ekle"
+### iPhone:
+1. Safari'de siteyi aç
+2. Alt kısımdaki **Paylaş** butonuna tıkla
+3. **"Ana Ekrana Ekle"** seç
+4. **"Ekle"** tıkla
+
+### Android:
+1. Chrome'da siteyi aç
+2. Sağ üstteki **⋮** menüsüne tıkla
+3. **"Ana ekrana ekle"** seç
+4. **"Ekle"** tıkla
 
 ---
 
 ## ❓ Sorun Giderme
 
-**Veriler görünmüyor:**
-- Supabase'de tabloların oluştuğunu kontrol et
-- Environment variables'ı kontrol et
+### "Veriler görünmüyor" veya "Demo modu" yazıyor:
+- Vercel'de Environment Variables'ı doğru ekledin mi?
+- Ekleme sonrası **"Redeploy"** yaptın mı?
+  - Vercel Dashboard → Deployments → en üstteki → **"Redeploy"**
 
-**Etiketleme çalışmıyor:**
-- `tags` tablosunun oluştuğundan emin ol
+### SQL hatası alıyorum:
+- Tabloların zaten var olup olmadığını kontrol et
+- Supabase → Table Editor'da `workouts` ve `tags` tablolarını gör
+
+### Antrenmanlar kaydedilmiyor:
+- Browser Console'da hata var mı? (F12 → Console)
+- Supabase API key'i doğru mu?
+
+---
+
+## 🔄 Güncelleme Yapmak İstersen
+
+1. GitHub'da dosyayı düzenle veya yeni dosya yükle
+2. Vercel otomatik olarak yeniden deploy edecek
+3. 1-2 dakika içinde site güncellenecek
+
+---
+
+## 📞 Yardım
+
+Herhangi bir sorunla karşılaşırsan Claude'a sor! 🚀

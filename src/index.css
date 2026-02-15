@@ -7,7 +7,7 @@
   -webkit-tap-highlight-color: transparent;
 }
 
-.font-mono {
+.mono {
   font-family: 'JetBrains Mono', monospace;
 }
 
@@ -21,14 +21,4 @@ body {
   nav {
     padding-bottom: env(safe-area-inset-bottom);
   }
-}
-
-/* Smooth animations */
-@keyframes slideUp {
-  from { opacity: 0; transform: translateY(20px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.animate-slide-up {
-  animation: slideUp 0.3s ease-out forwards;
 }
