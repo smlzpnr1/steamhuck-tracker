@@ -220,7 +220,7 @@ export default function SteamhuckTracker() {
 
   const saveReaction = async (workoutId, emoji) => {
     const reactionData = {
-      id: Date.now(),
+      id: Math.floor(Date.now() * 1000 + Math.random() * 1000),
       workout_id: workoutId,
       user_name: currentUser.name,
       emoji,
@@ -241,7 +241,7 @@ export default function SteamhuckTracker() {
     if (!newMessage.trim()) return;
     
     const messageData = {
-      id: Date.now(),
+      id: Math.floor(Date.now() * 1000 + Math.random() * 1000),
       user_name: currentUser.name,
       text: newMessage.trim(),
       created_at: new Date().toISOString()
@@ -487,7 +487,7 @@ export default function SteamhuckTracker() {
     for (const workoutId of selectedWorkouts) {
       const workout = WORKOUT_TYPES.find(w => w.id === workoutId);
       await saveWorkout({
-        id: Date.now() + Math.random(),
+        id: Math.floor(Date.now() * 1000 + Math.random() * 1000),
         user_name: currentUser.name,
         workout_type: workoutId,
         points: workout.points,
@@ -514,7 +514,7 @@ export default function SteamhuckTracker() {
     if (!tagTarget || !currentUser) return;
     
     await saveTag({
-      id: Date.now(),
+      id: Math.floor(Date.now() * 1000 + Math.random() * 1000),
       tagger_user: currentUser.name,
       target_user: tagTarget,
       status: 'pending',
