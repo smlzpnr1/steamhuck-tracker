@@ -10,6 +10,7 @@ const isDemo = !supabase;
 // Puan Tablosu
 const WORKOUT_TYPES = [
   { id: 'sh_training', name: 'SH Antrenmanı', emoji: '🥏', points: 4 },
+  { id: 'tournament', name: 'Turnuvaya Katılım', emoji: '🏆', points: 3 },
   { id: 'other_frisbee', name: 'Farklı Takım Frizbi', emoji: '🥏', points: 2 },
   { id: 'upper_body', name: 'Üst Vücut', emoji: '💪', points: 2 },
   { id: 'ultimate_lower', name: 'Alt Vücut/Core/HIIT', emoji: '🔥', points: 3 },
@@ -130,6 +131,54 @@ export default function SteamhuckTracker() {
     }, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  // 48 saat geçen etiketleri kontrol et
+  useEffect(() => {
+    if (tags.length === 0) return;
+    
+    const checkExpiredTags = async () => {
+      const now = new Date();
+      let hasChanges = false;
+      
+      const updatedTags = tags.map(tag => {
+        if (tag.status !== 'pending') return tag;
+        
+        const tagTime = new Date(tag.created_at);
+        const hoursPassed = (now - tagTime) / (1000 * 60 * 60);
+        
+        // 48 saat geçtiyse
+        if (hoursPassed >= 48) {
+          hasChanges = true;
+          return { ...tag, status: 'failed', resolved_at: now.toISOString() };
+        }
+        return tag;
+      });
+      
+      if (hasChanges) {
+        setTags(updatedTags);
+        
+        if (isDemo) {
+          localStorage.setItem('steamhuckTags', JSON.stringify(updatedTags));
+        } else {
+          // Supabase'de expired etiketleri güncelle
+          const expiredTags = updatedTags.filter(t => t.status === 'failed' && !tags.find(ot => ot.id === t.id && ot.status === 'failed'));
+          for (const tag of expiredTags) {
+            await supabase.from('tags').update({ 
+              status: 'failed', 
+              resolved_at: now.toISOString() 
+            }).eq('id', tag.id);
+          }
+        }
+      }
+    };
+    
+    // Sayfa yüklendiğinde kontrol et
+    checkExpiredTags();
+    
+    // Her dakika kontrol et
+    const interval = setInterval(checkExpiredTags, 60000);
+    return () => clearInterval(interval);
+  }, [tags]);
 
   const loadData = async () => {
     setDataLoading(true);
@@ -494,6 +543,32 @@ export default function SteamhuckTracker() {
         created_at: new Date().toISOString()
       });
       totalPoints += workout.points;
+    }
+    
+    // Etiket savunma kontrolü - 2+ puan yaptıysa pending etiketleri "defended" yap
+    if (totalPoints >= 2) {
+      const pendingTags = tags.filter(t => t.status === 'pending' && t.target_user === currentUser.name);
+      if (pendingTags.length > 0) {
+        const updatedTags = tags.map(t => {
+          if (t.status === 'pending' && t.target_user === currentUser.name) {
+            return { ...t, status: 'defended', resolved_at: new Date().toISOString() };
+          }
+          return t;
+        });
+        setTags(updatedTags);
+        
+        if (isDemo) {
+          localStorage.setItem('steamhuckTags', JSON.stringify(updatedTags));
+        } else {
+          // Supabase'de her pending etiketi güncelle
+          for (const tag of pendingTags) {
+            await supabase.from('tags').update({ 
+              status: 'defended', 
+              resolved_at: new Date().toISOString() 
+            }).eq('id', tag.id);
+          }
+        }
+      }
     }
     
     // Rastgele motivasyon mesajı
