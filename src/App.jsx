@@ -147,24 +147,44 @@ export default function SteamhuckTracker() {
       if (savedMessages) setMessages(JSON.parse(savedMessages));
       if (savedGoals) setWeeklyGoals(JSON.parse(savedGoals));
     } else {
+      // Her tabloyu ayrı ayrı çek - biri hata verse diğerleri çalışsın
       try {
-        const [workoutsRes, tagsRes, reactionsRes, messagesRes] = await Promise.all([
-          supabase.from('workouts').select('*').order('created_at', { ascending: false }),
-          supabase.from('tags').select('*').order('created_at', { ascending: false }),
-          supabase.from('reactions').select('*'),
-          supabase.from('messages').select('*').order('created_at', { ascending: false }).limit(50)
-        ]);
-        
+        const workoutsRes = await supabase.from('workouts').select('*').order('created_at', { ascending: false });
         if (workoutsRes.data) setWorkouts(workoutsRes.data);
-        if (tagsRes.data) setTags(tagsRes.data);
-        if (reactionsRes.data) setReactions(reactionsRes.data);
-        if (messagesRes.data) setMessages(messagesRes.data);
-        
-        // Haftalık hedefleri yükle
-        const goalsRes = await supabase.from('weekly_goals').select('*').single();
-        if (goalsRes.data) setWeeklyGoals(JSON.parse(goalsRes.data.goals_json));
+        if (workoutsRes.error) console.error('Workouts hatası:', workoutsRes.error);
       } catch (err) {
-        console.error('Veri yükleme hatası:', err);
+        console.error('Workouts yükleme hatası:', err);
+      }
+
+      try {
+        const tagsRes = await supabase.from('tags').select('*').order('created_at', { ascending: false });
+        if (tagsRes.data) setTags(tagsRes.data);
+        if (tagsRes.error) console.error('Tags hatası:', tagsRes.error);
+      } catch (err) {
+        console.error('Tags yükleme hatası:', err);
+      }
+
+      try {
+        const reactionsRes = await supabase.from('reactions').select('*');
+        if (reactionsRes.data) setReactions(reactionsRes.data);
+      } catch (err) {
+        console.error('Reactions yükleme hatası:', err);
+      }
+
+      try {
+        const messagesRes = await supabase.from('messages').select('*').order('created_at', { ascending: false }).limit(50);
+        if (messagesRes.data) setMessages(messagesRes.data);
+      } catch (err) {
+        console.error('Messages yükleme hatası:', err);
+      }
+
+      try {
+        const goalsRes = await supabase.from('weekly_goals').select('*');
+        if (goalsRes.data && goalsRes.data.length > 0) {
+          setWeeklyGoals(JSON.parse(goalsRes.data[0].goals_json));
+        }
+      } catch (err) {
+        console.error('Weekly goals yükleme hatası:', err);
       }
     }
     
