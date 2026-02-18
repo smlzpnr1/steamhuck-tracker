@@ -1242,12 +1242,31 @@ export default function SteamhuckTracker() {
               <h3 className="text-white font-bold mb-3">🎯 Etiketler</h3>
               {tags.length === 0 ? <p className="text-slate-500 text-center py-4">Henüz etiket yok</p> : (
                 <div className="space-y-2">
-                  {tags.slice(0, 10).map(tag => (
-                    <div key={tag.id} className={`p-3 rounded-xl flex items-center justify-between ${tag.status === 'pending' ? 'bg-orange-500/10 border border-orange-500/30' : tag.status === 'defended' ? 'bg-green-500/10 border border-green-500/30' : 'bg-red-500/10 border border-red-500/30'}`}>
-                      <div className="text-sm"><span className="text-white">{tag.tagger_user}</span> → <span className="text-white">{tag.target_user}</span></div>
-                      <span className={`text-xs px-2 py-1 rounded-full ${tag.status === 'pending' ? 'bg-orange-500/20 text-orange-300' : tag.status === 'defended' ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300'}`}>{tag.status === 'pending' ? '⏳' : tag.status === 'defended' ? '✅ +1' : '❌ -3'}</span>
-                    </div>
-                  ))}
+                  {tags.slice(0, 10).map(tag => {
+                    const tagTime = new Date(tag.created_at);
+                    const now = new Date();
+                    const hoursPassed = (now - tagTime) / (1000 * 60 * 60);
+                    const hoursLeft = Math.max(0, 48 - hoursPassed);
+                    const hoursDisplay = Math.floor(hoursLeft);
+                    const minutesDisplay = Math.floor((hoursLeft - hoursDisplay) * 60);
+                    
+                    return (
+                      <div key={tag.id} className={`p-3 rounded-xl ${tag.status === 'pending' ? 'bg-orange-500/10 border border-orange-500/30' : tag.status === 'defended' ? 'bg-green-500/10 border border-green-500/30' : 'bg-red-500/10 border border-red-500/30'}`}>
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm"><span className="text-white">{tag.tagger_user}</span> → <span className="text-white">{tag.target_user}</span></div>
+                          {tag.status === 'pending' ? (
+                            <span className="text-xs px-2 py-1 rounded-full bg-orange-500/20 text-orange-300">
+                              ⏳ {hoursDisplay}s {minutesDisplay}dk
+                            </span>
+                          ) : (
+                            <span className={`text-xs px-2 py-1 rounded-full ${tag.status === 'defended' ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300'}`}>
+                              {tag.status === 'defended' ? '✅ +1' : '❌ -3'}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
