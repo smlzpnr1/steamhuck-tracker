@@ -117,6 +117,15 @@ export default function SteamhuckTracker() {
   const [dataLoading, setDataLoading] = useState(true);
   const [newGoals, setNewGoals] = useState([]);
   const [showNewSeasonModal, setShowNewSeasonModal] = useState(false);
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  // Sayaç için her dakika güncelle
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 60000); // Her dakika
+    return () => clearInterval(timer);
+  }, []);
 
   // Veri yükleme
   useEffect(() => {
@@ -1082,13 +1091,30 @@ export default function SteamhuckTracker() {
                     }
                     
                     if (item.type === 'tag') {
+                      const tagTime = new Date(item.data.created_at);
+                      const now = new Date();
+                      const hoursPassed = (now - tagTime) / (1000 * 60 * 60);
+                      const hoursLeft = Math.max(0, 48 - hoursPassed);
+                      const hoursDisplay = Math.floor(hoursLeft);
+                      const minutesDisplay = Math.floor((hoursLeft - hoursDisplay) * 60);
+                      
                       return (
                         <div key={item.id} className="bg-orange-500/10 rounded-xl p-4 border border-orange-500/30">
                           <div className="flex items-center gap-3">
                             <div className="w-10 h-10 rounded-full bg-orange-500/20 flex items-center justify-center text-lg">🎯</div>
                             <div className="flex-1">
                               <div className="flex items-center gap-2"><span className="text-white font-medium">{item.user}</span><span className="text-orange-400">→</span><span className="text-white font-medium">{item.target}</span></div>
-                              <p className="text-orange-300 text-sm">{item.data.status === 'pending' ? '⏳ 48 saat başladı!' : item.data.status === 'defended' ? '✅ Savunuldu +1' : '❌ Başarısız -3'}</p>
+                              {item.data.status === 'pending' ? (
+                                <div className="text-orange-300 text-sm">
+                                  <span>⏳ Kalan: </span>
+                                  <span className="font-bold">{hoursDisplay}s {minutesDisplay}dk</span>
+                                  <span className="text-orange-400/60 text-xs ml-2">
+                                    ({tagTime.toLocaleString('tr-TR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })})
+                                  </span>
+                                </div>
+                              ) : (
+                                <p className="text-sm">{item.data.status === 'defended' ? <span className="text-green-400">✅ Savunuldu +1</span> : <span className="text-red-400">❌ Başarısız -3</span>}</p>
+                              )}
                             </div>
                           </div>
                         </div>
