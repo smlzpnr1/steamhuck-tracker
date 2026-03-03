@@ -75,6 +75,7 @@ const MOTIVATION_MESSAGES = [
 
 const DEFAULT_SEASON_START = '2026-02-16T00:00:00';
 const SEASON_DURATION_DAYS = 14;
+const APP_SETTINGS_ID = 'global';
 
 // Varsayılan Haftalık Hedefler
 const DEFAULT_WEEKLY_GOALS = {
@@ -224,6 +225,44 @@ export default function SteamhuckTracker() {
       if (savedMessages) setMessages(JSON.parse(savedMessages));
       if (savedGoals) setWeeklyGoals(JSON.parse(savedGoals));
     } else {
+      // Ortak uygulama ayarları (takımlar + sezon başlangıcı)
+      try {
+        const settingsRes = await supabase
+          .from('app_settings')
+          .select('teams_json, season_start')
+          .eq('id', APP_SETTINGS_ID)
+          .maybeSingle();
+
+        if (settingsRes.data) {
+          const dbTeams = settingsRes.data.teams_json;
+          const hasValidTeams = dbTeams?.team_emir?.members && dbTeams?.team_ceyhun?.members;
+
+          if (hasValidTeams) {
+            setTeams(dbTeams);
+          } else {
+            await supabase.from('app_settings').upsert({
+              id: APP_SETTINGS_ID,
+              teams_json: DEFAULT_TEAMS,
+              season_start: settingsRes.data.season_start || DEFAULT_SEASON_START
+            });
+            setTeams(DEFAULT_TEAMS);
+          }
+
+          if (settingsRes.data.season_start) setSeasonStart(settingsRes.data.season_start);
+        } else {
+          // İlk kurulumda varsayılan ayarları oluştur
+          await supabase.from('app_settings').upsert({
+            id: APP_SETTINGS_ID,
+            teams_json: DEFAULT_TEAMS,
+            season_start: DEFAULT_SEASON_START
+          });
+          setTeams(DEFAULT_TEAMS);
+          setSeasonStart(DEFAULT_SEASON_START);
+        }
+      } catch (err) {
+        console.error('App settings yükleme hatası:', err);
+      }
+
       // Her tabloyu ayrı ayrı çek - biri hata verse diğerleri çalışsın
       try {
         const workoutsRes = await supabase.from('workouts').select('*').order('created_at', { ascending: false });
@@ -365,18 +404,40 @@ export default function SteamhuckTracker() {
   };
 
   const isCaptain = (userName) => {
-    return userName === 'Ceyhun';
+    return teams.team_emir.captain === userName || teams.team_ceyhun.captain === userName;
   };
 
-  const saveTeams = (newTeams) => {
+  const saveTeams = async (newTeams) => {
     setTeams(newTeams);
     localStorage.setItem('steamhuckTeams', JSON.stringify(newTeams));
+
+    if (!isDemo) {
+      const { error } = await supabase.from('app_settings').upsert({
+        id: APP_SETTINGS_ID,
+        teams_json: newTeams,
+        season_start: seasonStart
+      });
+      if (error) console.error('Takım ayarları kayıt hatası:', error);
+    }
   };
 
-  const startNewSeason = (startDate) => {
-    const newStart = new Date(startDate).toISOString();
+  const saveSeasonStart = async (newStart) => {
     setSeasonStart(newStart);
     localStorage.setItem('steamhuckSeasonStart', newStart);
+
+    if (!isDemo) {
+      const { error } = await supabase.from('app_settings').upsert({
+        id: APP_SETTINGS_ID,
+        teams_json: teams,
+        season_start: newStart
+      });
+      if (error) console.error('Sezon ayarı kayıt hatası:', error);
+    }
+  };
+
+  const startNewSeason = async (startDate) => {
+    const newStart = new Date(startDate).toISOString();
+    await saveSeasonStart(newStart);
     // Tüm verileri sıfırla
     setWorkouts([]);
     setTags([]);
@@ -1342,7 +1403,7 @@ export default function SteamhuckTracker() {
                 <div key={member} className="flex items-center justify-between py-2 border-b border-slate-700 last:border-0">
                   <div className="flex items-center gap-2">
                     <span className={`w-2 h-2 rounded-full ${mTeam === 'team_emir' ? 'bg-emerald-500' : 'bg-blue-500'}`}></span>
-                    <span className="text-white text-sm">{member === 'Ceyhun' && '👑 '}{member}</span>
+                    <span className="text-white text-sm">{isCaptain(member) && '👑 '}{member}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-slate-400 text-xs">Hafta: {getWeeklyPoints(member)}</span>
@@ -1456,7 +1517,7 @@ export default function SteamhuckTracker() {
                             </div>
                             <div className="flex items-center gap-2">
                               <div className={`mono font-bold px-2 py-1 rounded-lg text-sm ${isEmirTeam ? 'bg-emerald-500/20 text-emerald-400' : 'bg-blue-500/20 text-blue-400'}`}>+{item.data.points}</div>
-                              {currentUser.name === 'Ceyhun' && (
+                              {userIsCaptain && (
                                 <button onClick={() => {
                                   const updated = workouts.filter(w => w.id !== item.data.id);
                                   setWorkouts(updated);
@@ -1496,7 +1557,7 @@ export default function SteamhuckTracker() {
                                 <p className="text-sm">{item.data.status === 'defended' ? <span className="text-green-400">✅ Savunuldu +1</span> : <span className="text-red-400">❌ Başarısız -3</span>}</p>
                               )}
                             </div>
-                          {currentUser.name === 'Ceyhun' && (
+                          {userIsCaptain && (
                               <button onClick={() => {
                                 const updated = tags.filter(t => t.id !== item.data.id);
                                 setTags(updated);
