@@ -16,13 +16,14 @@ const WORKOUT_TYPES = [
   { id: 'ultimate_lower', name: 'Alt Vücut/Core/HIIT', emoji: '🔥', points: 3 },
   { id: 'explosive', name: 'Koşu 5km+ / Bisiklet 10km+', emoji: '🏃', points: 3 },
   { id: 'plyometrics', name: 'Plyometrics / Sprint', emoji: '⚡', points: 3 },
-  { id: 'other_sport', name: 'Farklı Spor Dalı', emoji: '🎾', points: 1 },
+  { id: 'other_sport', name: 'Farklı Spor Dalı', emoji: '🎾', points: 2 },
   { id: 'mobility', name: 'Yoga / Pilates / Mobility', emoji: '🧘', points: 1 },
+  { id: 'match_watch', name: 'Maç İzleme', emoji: '📺', points: 1, weeklyLimit: 2 },
   { id: 'disc_throwing', name: 'Disk Atma', emoji: '🎯', points: 2 },
 ];
 
-// Takımlar
-const TEAMS = {
+// Takımlar (varsayılan)
+const DEFAULT_TEAMS = {
   team_emir: {
     name: "Emir'in Takımı",
     captain: 'Emir',
@@ -72,7 +73,7 @@ const MOTIVATION_MESSAGES = [
   "Devam et şampiyon! 👑",
 ];
 
-const SEASON_START = new Date('2026-02-16T00:00:00');
+const DEFAULT_SEASON_START = '2026-02-16T00:00:00';
 const SEASON_DURATION_DAYS = 14;
 
 // Varsayılan Haftalık Hedefler
@@ -96,6 +97,21 @@ const DEFAULT_WEEKLY_GOALS = {
 export default function SteamhuckTracker() {
   const [currentUser, setCurrentUser] = useState(null);
   const [view, setView] = useState('feed');
+  const [teams, setTeams] = useState(() => {
+    const saved = localStorage.getItem('steamhuckTeams');
+    return saved ? JSON.parse(saved) : DEFAULT_TEAMS;
+  });
+  const [seasonStart, setSeasonStart] = useState(() => {
+    const saved = localStorage.getItem('steamhuckSeasonStart');
+    return saved || DEFAULT_SEASON_START;
+  });
+  const [showSeasonModal, setShowSeasonModal] = useState(false);
+  const [newSeasonDate, setNewSeasonDate] = useState('');
+  const [showTeamEditor, setShowTeamEditor] = useState(false);
+  const [newMemberName, setNewMemberName] = useState('');
+  const [editingTeamName, setEditingTeamName] = useState({ team_emir: false, team_ceyhun: false });
+  const [teamNameInput, setTeamNameInput] = useState({ team_emir: '', team_ceyhun: '' });
+  const [editingTeam, setEditingTeam] = useState('team_emir');
   const [workouts, setWorkouts] = useState([]);
   const [tags, setTags] = useState([]);
   const [reactions, setReactions] = useState([]);
@@ -129,8 +145,6 @@ export default function SteamhuckTracker() {
 
   // Veri yükleme
   useEffect(() => {
-    const savedUser = localStorage.getItem('steamhuckUser');
-    if (savedUser) setCurrentUser(JSON.parse(savedUser));
     loadData();
   }, []);
 
@@ -140,6 +154,11 @@ export default function SteamhuckTracker() {
     }, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  // Hafta bitince ceza kontrolü - sadece veri ilk yüklenince çalış
+  useEffect(() => {
+    if (workouts.length > 0 && !dataLoading) applyWeeklyPenalties(workouts, teams);
+  }, [dataLoading]);
 
   // 48 saat geçen etiketleri kontrol et
   useEffect(() => {
@@ -270,7 +289,9 @@ export default function SteamhuckTracker() {
       localStorage.setItem('steamhuckTags', JSON.stringify(newTags));
       return true;
     } else {
-      const { error } = await supabase.from('tags').insert(tagData);
+      const { id, ...supabaseData } = tagData;
+      const { error } = await supabase.from('tags').insert(supabaseData);
+      if (error) console.error('Tag kayıt hatası:', error);
       if (!error) { await loadData(); return true; }
       return false;
     }
@@ -290,7 +311,8 @@ export default function SteamhuckTracker() {
       setReactions(newReactions);
       localStorage.setItem('steamhuckReactions', JSON.stringify(newReactions));
     } else {
-      await supabase.from('reactions').insert(reactionData);
+      const { id: _rid, ...supabaseReaction } = reactionData;
+      await supabase.from('reactions').insert(supabaseReaction);
       await loadData();
     }
   };
@@ -310,7 +332,8 @@ export default function SteamhuckTracker() {
       setMessages(newMessages);
       localStorage.setItem('steamhuckMessages', JSON.stringify(newMessages));
     } else {
-      await supabase.from('messages').insert(messageData);
+      const { id: _mid, ...supabaseMessage } = messageData;
+      await supabase.from('messages').insert(supabaseMessage);
       await loadData();
     }
     
@@ -319,7 +342,8 @@ export default function SteamhuckTracker() {
   };
 
   const saveWeeklyGoals = async (goals) => {
-    const updatedGoals = { ...weeklyGoals, week2: { ...weeklyGoals.week2, goals } };
+    const weekKey = `week${getCurrentWeekNumber()}`;
+    const updatedGoals = { ...weeklyGoals, [weekKey]: { ...weeklyGoals[weekKey], goals } };
     setWeeklyGoals(updatedGoals);
     
     if (isDemo) {
@@ -331,8 +355,8 @@ export default function SteamhuckTracker() {
 
   // Yardımcı fonksiyonlar
   const getUserTeam = (userName) => {
-    if (TEAMS.team_emir.members.includes(userName)) return 'team_emir';
-    if (TEAMS.team_ceyhun.members.includes(userName)) return 'team_ceyhun';
+    if (teams.team_emir.members.includes(userName)) return 'team_emir';
+    if (teams.team_ceyhun.members.includes(userName)) return 'team_ceyhun';
     return null;
   };
 
@@ -341,21 +365,122 @@ export default function SteamhuckTracker() {
   };
 
   const isCaptain = (userName) => {
-    return TEAMS.team_emir.captain === userName || TEAMS.team_ceyhun.captain === userName;
+    return userName === 'Ceyhun';
+  };
+
+  const saveTeams = (newTeams) => {
+    setTeams(newTeams);
+    localStorage.setItem('steamhuckTeams', JSON.stringify(newTeams));
+  };
+
+  const startNewSeason = (startDate) => {
+    const newStart = new Date(startDate).toISOString();
+    setSeasonStart(newStart);
+    localStorage.setItem('steamhuckSeasonStart', newStart);
+    // Tüm verileri sıfırla
+    setWorkouts([]);
+    setTags([]);
+    setReactions([]);
+    setMessages([]);
+    setWeeklyGoals({
+      week1: {
+        start: new Date(startDate),
+        end: new Date(new Date(startDate).getTime() + 7 * 24 * 60 * 60 * 1000),
+        goals: []
+      },
+      week2: {
+        start: new Date(new Date(startDate).getTime() + 7 * 24 * 60 * 60 * 1000),
+        end: new Date(new Date(startDate).getTime() + 14 * 24 * 60 * 60 * 1000),
+        goals: []
+      }
+    });
+    ['steamhuckWorkouts','steamhuckTags','steamhuckReactions','steamhuckMessages',
+     'steamhuckWeeklyGoals','steamhuckWeekPenalties','steamhuckLastPenaltyCheck'].forEach(k => localStorage.removeItem(k));
+    setShowSeasonModal(false);
+    setSuccessMessage('🏆 Yeni sezon başladı!');
+    setShowSuccess(true);
+    setTimeout(() => setShowSuccess(false), 2000);
+  };
+
+  const handleTeamReset = (newTeams) => {
+    saveTeams(newTeams);
+    setWorkouts([]);
+    setTags([]);
+    setReactions([]);
+    setMessages([]);
+    ['steamhuckWorkouts', 'steamhuckTags', 'steamhuckReactions', 'steamhuckMessages', 'steamhuckWeeklyGoals', 'steamhuckWeekPenalties', 'steamhuckLastPenaltyCheck'].forEach(k => localStorage.removeItem(k));
+    setSuccessMessage('Takım güncellendi!');
+    setShowSuccess(true);
+    setTimeout(() => setShowSuccess(false), 1500);
+  };
+
+  const moveMember = (member, fromTeam, toTeam) => {
+    const newTeams = {
+      ...teams,
+      [fromTeam]: { ...teams[fromTeam], members: teams[fromTeam].members.filter(m => m !== member) },
+      [toTeam]: { ...teams[toTeam], members: [...teams[toTeam].members, member] }
+    };
+    handleTeamReset(newTeams);
+  };
+
+  const removeMember = (member, teamId) => {
+    const newTeams = {
+      ...teams,
+      [teamId]: { ...teams[teamId], members: teams[teamId].members.filter(m => m !== member) }
+    };
+    handleTeamReset(newTeams);
+  };
+
+  const addMember = (teamId) => {
+    if (!newMemberName.trim()) return;
+    const name = newMemberName.trim();
+    if (teams.team_emir.members.includes(name) || teams.team_ceyhun.members.includes(name)) {
+      alert('Bu isim zaten mevcut!');
+      return;
+    }
+    const newTeams = {
+      ...teams,
+      [teamId]: { ...teams[teamId], members: [...teams[teamId].members, name] }
+    };
+    handleTeamReset(newTeams);
+    setNewMemberName('');
+  };
+
+  const changeTeamName = (teamId, newName) => {
+    if (!newName.trim()) return;
+    const newTeams = { ...teams, [teamId]: { ...teams[teamId], name: newName.trim() } };
+    saveTeams(newTeams);
+    setEditingTeamName(prev => ({ ...prev, [teamId]: false }));
+  };
+
+  const changeCaptain = (teamId, newCaptain) => {
+    const newTeams = { ...teams, [teamId]: { ...teams[teamId], captain: newCaptain, name: `${newCaptain}'in Takımı` } };
+    handleTeamReset(newTeams);
   };
 
   const getWeekStart = () => {
     const now = new Date();
     const day = now.getDay();
     const diff = now.getDate() - day + (day === 0 ? -6 : 1);
-    const start = new Date(now.setDate(diff));
+    const start = new Date(now); // orijinali mutate etme
+    start.setDate(diff);
     start.setHours(0, 0, 0, 0);
     return start;
   };
 
+  const getWeeklyWorkoutCount = (workoutTypeId) => {
+    if (!currentUser) return 0;
+    const weekStart = getWeekStart();
+    return workouts.filter(w =>
+      w.user_name === currentUser.name &&
+      w.workout_type === workoutTypeId &&
+      new Date(w.created_at) >= weekStart
+    ).length;
+  };
+
   const getDaysRemaining = () => {
     const now = new Date();
-    const end = new Date(SEASON_START);
+    const end = new Date(seasonStart);
     end.setDate(end.getDate() + SEASON_DURATION_DAYS);
     return Math.max(0, Math.ceil((end - now) / (1000 * 60 * 60 * 24)));
   };
@@ -367,9 +492,11 @@ export default function SteamhuckTracker() {
       .reduce((sum, w) => sum + w.points, 0);
   };
 
+
   const getCurrentWeekNumber = () => {
     const now = new Date();
-    if (now >= weeklyGoals.week2?.start) return 2;
+    const week2Start = weeklyGoals.week2?.start ? new Date(weeklyGoals.week2.start) : null;
+    if (week2Start && now >= week2Start) return 2;
     return 1;
   };
 
@@ -386,7 +513,7 @@ export default function SteamhuckTracker() {
 
     const userWorkoutsThisWeek = workouts.filter(w => {
       const wDate = new Date(w.created_at);
-      return w.user_name === userName && wDate >= currentWeek.start && wDate < currentWeek.end;
+      return w.user_name === userName && wDate >= new Date(currentWeek.start) && wDate < new Date(currentWeek.end);
     });
 
     const progress = currentWeek.goals.map(goal => ({
@@ -397,20 +524,95 @@ export default function SteamhuckTracker() {
     return { completed: progress.every(g => g.done), progress };
   };
 
+  const checkWeekGoalsCompleted = (userName, weekKey) => {
+    const week = weeklyGoals[weekKey];
+    if (!week || !week.goals || week.goals.length === 0) return false;
+
+    const userWorkoutsThisWeek = workouts.filter(w => {
+      const wDate = new Date(w.created_at);
+      return w.user_name === userName && wDate >= new Date(week.start) && wDate < new Date(week.end);
+    });
+
+    return week.goals.every(goal =>
+      userWorkoutsThisWeek.some(w => w.workout_type === goal.id)
+    );
+  };
+
+  const getWeeklyMinPenalty = (userName) => {
+    // localStorage'da saklanan kalıcı cezaları oku
+    const stored = JSON.parse(localStorage.getItem('steamhuckWeekPenalties') || '{}');
+    return (stored[userName] || 0);
+  };
+
+  const applyWeeklyPenalties = (currentWorkouts, currentTeams) => {
+    // Veriler yüklenince çağrılır - geçen haftayı kontrol eder
+    // Güvenlik: workouts boşsa çalışma
+    if (!currentWorkouts || currentWorkouts.length === 0) return;
+
+    const currentWeekStart = getWeekStart();
+    const prevWeekStart = new Date(currentWeekStart);
+    prevWeekStart.setDate(prevWeekStart.getDate() - 7);
+    const prevWeekEnd = new Date(currentWeekStart);
+
+    // Geçen hafta sezon içinde mi?
+    const seasonEnd = new Date(seasonStart);
+    seasonEnd.setDate(seasonEnd.getDate() + SEASON_DURATION_DAYS);
+
+    // prevWeekEnd en az seasonStart'tan sonra olmalı
+    // ve prevWeekStart sezon bitmeden önce olmalı
+    if (prevWeekEnd <= new Date(seasonStart) || prevWeekStart >= seasonEnd) return;
+
+    // Son kontrol edilen hafta bu mu?
+    const lastChecked = localStorage.getItem('steamhuckLastPenaltyCheck');
+    const prevWeekKey = prevWeekStart.toISOString().split('T')[0];
+    if (lastChecked === prevWeekKey) return; // Zaten kontrol edildi
+
+    const stored = JSON.parse(localStorage.getItem('steamhuckWeekPenalties') || '{}');
+    let changed = false;
+
+    const activeTeams = currentTeams || teams;
+    const allMembers = [...activeTeams.team_emir.members, ...activeTeams.team_ceyhun.members];
+    allMembers.forEach(userName => {
+      const weekPoints = currentWorkouts
+        .filter(w => {
+          const d = new Date(w.created_at);
+          return w.user_name === userName && d >= prevWeekStart && d < prevWeekEnd;
+        })
+        .reduce((sum, w) => sum + w.points, 0);
+
+      if (weekPoints < 6) {
+        stored[userName] = (stored[userName] || 0) + 3;
+        changed = true;
+      }
+    });
+
+    if (changed) {
+      localStorage.setItem('steamhuckWeekPenalties', JSON.stringify(stored));
+    }
+    localStorage.setItem('steamhuckLastPenaltyCheck', prevWeekKey);
+  };
+
   const getSeasonPoints = (userName) => {
     const basePoints = workouts
-      .filter(w => w.user_name === userName && new Date(w.created_at) >= SEASON_START)
+      .filter(w => w.user_name === userName && new Date(w.created_at) >= new Date(seasonStart))
       .reduce((sum, w) => sum + w.points, 0);
-    
+
     const tagBonus = tags.filter(t => t.target_user === userName && t.status === 'defended').length;
     const tagPenalty = tags.filter(t => t.target_user === userName && t.status === 'failed').length * 3;
-    const weeklyGoalBonus = checkWeeklyGoalsCompleted(userName).completed ? 3 : 0;
 
-    return basePoints + tagBonus - tagPenalty + weeklyGoalBonus;
+    // Her hafta ayrı ayrı +3 — tamamlandığında kalıcı
+    const weeklyGoalBonus = Object.keys(weeklyGoals).reduce((sum, weekKey) => {
+      return sum + (checkWeekGoalsCompleted(userName, weekKey) ? 3 : 0);
+    }, 0);
+
+    // Geçmiş haftalarda 6 puan altı → -3 ceza
+    const minWeeklyPenalty = getWeeklyMinPenalty(userName);
+
+    return basePoints + tagBonus - tagPenalty + weeklyGoalBonus - minWeeklyPenalty;
   };
 
   const getTeamPoints = (teamId) => {
-    return TEAMS[teamId].members.reduce((sum, m) => sum + getSeasonPoints(m), 0);
+    return teams[teamId].members.reduce((sum, m) => sum + getSeasonPoints(m), 0);
   };
 
   // Seviye hesaplama
@@ -459,7 +661,7 @@ export default function SteamhuckTracker() {
     const weeklyPts = getWeeklyPoints(userName);
     const goalsOk = checkWeeklyGoalsCompleted(userName).completed;
     const defends = tags.filter(t => t.target_user === userName && t.status === 'defended').length;
-    const successfulTags = tags.filter(t => t.tagger_user === userName && t.status === 'failed').length;
+    const successfulTags = tags.filter(t => t.tagger_user === userName && t.status === 'defended').length;
 
     return BADGES.filter(b => b.check(userWorkouts, streak, weeklyPts, goalsOk, defends, successfulTags));
   };
@@ -514,12 +716,12 @@ export default function SteamhuckTracker() {
 
   const getTaggableOpponents = () => {
     if (!currentUser) return [];
-    const oppTeam = TEAMS[getOpponentTeamId(currentUser.name)];
+    const oppTeam = teams[getOpponentTeamId(currentUser.name)];
     return oppTeam.members.filter(m => canBeTagged(m));
   };
 
   const getLeaderboard = () => {
-    const allMembers = [...TEAMS.team_emir.members, ...TEAMS.team_ceyhun.members];
+    const allMembers = [...teams.team_emir.members, ...teams.team_ceyhun.members];
     return allMembers
       .map(name => ({
         name,
@@ -539,19 +741,31 @@ export default function SteamhuckTracker() {
   const submitWorkout = async () => {
     if (selectedWorkouts.length === 0 || !currentUser) return;
     setIsLoading(true);
-    
-    let totalPoints = 0;
-    
-    for (const workoutId of selectedWorkouts) {
+
+    const now = new Date().toISOString();
+    const newEntries = selectedWorkouts.map((workoutId, i) => {
       const workout = WORKOUT_TYPES.find(w => w.id === workoutId);
-      await saveWorkout({
-        id: Math.floor(Date.now() * 1000 + Math.random() * 1000),
+      return {
+        id: Date.now() + i,
         user_name: currentUser.name,
         workout_type: workoutId,
         points: workout.points,
-        created_at: new Date().toISOString()
-      });
-      totalPoints += workout.points;
+        created_at: now
+      };
+    });
+
+    const totalPoints = newEntries.reduce((s, e) => s + e.points, 0);
+
+    if (isDemo) {
+      const newWorkouts = [...newEntries, ...workouts];
+      setWorkouts(newWorkouts);
+      localStorage.setItem('steamhuckWorkouts', JSON.stringify(newWorkouts));
+    } else {
+      // Supabase'e id olmadan gönder - otomatik oluşsun
+      const supabaseEntries = newEntries.map(({ id, ...rest }) => rest);
+      const { error } = await supabase.from('workouts').insert(supabaseEntries);
+      if (error) console.error('Workout kayıt hatası:', error);
+      await loadData();
     }
     
     // Etiket savunma kontrolü - 2+ puan yaptıysa pending etiketleri "defended" yap
@@ -585,11 +799,11 @@ export default function SteamhuckTracker() {
     setSuccessMessage(`+${totalPoints} PUAN\n${randomMsg}`);
     setShowSuccess(true);
     setShowWorkoutModal(false);
+    setSelectedWorkouts([]);
     setIsLoading(false);
     
     setTimeout(() => {
       setShowSuccess(false);
-      setSelectedWorkouts([]);
       if (!hasTaggedToday()) setShowTagModal(true);
     }, 1500);
   };
@@ -598,7 +812,7 @@ export default function SteamhuckTracker() {
     if (!tagTarget || !currentUser) return;
     
     await saveTag({
-      id: Math.floor(Date.now() * 1000 + Math.random() * 1000),
+      id: Date.now(),
       tagger_user: currentUser.name,
       target_user: tagTarget,
       status: 'pending',
@@ -614,12 +828,10 @@ export default function SteamhuckTracker() {
 
   const handleLogin = (name) => {
     setCurrentUser({ name });
-    localStorage.setItem('steamhuckUser', JSON.stringify({ name }));
   };
 
   const handleLogout = () => {
     setCurrentUser(null);
-    localStorage.removeItem('steamhuckUser');
   };
 
   const resetAllData = () => {
@@ -703,7 +915,7 @@ export default function SteamhuckTracker() {
 
           {/* Takımlar */}
           <div className="grid grid-cols-2 gap-3 mb-6">
-            {Object.entries(TEAMS).map(([teamId, team]) => (
+            {Object.entries(teams).map(([teamId, team]) => (
               <div key={teamId} className={`rounded-xl p-4 border text-center ${teamId === 'team_emir' ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-blue-500/10 border-blue-500/30'}`}>
                 <div className="text-2xl mb-1">{team.emoji}</div>
                 <div className={`font-bold ${teamId === 'team_emir' ? 'text-emerald-400' : 'text-blue-400'}`}>{team.captain}</div>
@@ -713,7 +925,7 @@ export default function SteamhuckTracker() {
           </div>
 
           {/* Üye Seçimi */}
-          {Object.entries(TEAMS).map(([teamId, team]) => (
+          {Object.entries(teams).map(([teamId, team]) => (
             <div key={teamId} className={`mb-4 rounded-2xl p-4 border ${teamId === 'team_emir' ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-blue-500/5 border-blue-500/20'}`}>
               <div className="flex items-center gap-2 mb-3">
                 <span className="text-xl">{team.emoji}</span>
@@ -729,7 +941,7 @@ export default function SteamhuckTracker() {
             </div>
           ))}
 
-          {isDemo && <button onClick={resetAllData} className="w-full mt-4 py-2 text-slate-500 text-sm hover:text-red-400">🗑️ Verileri sıfırla</button>}
+
         </div>
 
         {/* Kurallar Modal */}
@@ -787,7 +999,7 @@ export default function SteamhuckTracker() {
                   {currentUser.name}
                   {userStreak >= 3 && <span className="text-orange-400 text-xs">🔥{userStreak}</span>}
                 </div>
-                <div className="text-slate-400 text-xs">{userLevel.name} • {TEAMS[userTeamId].name}</div>
+                <div className="text-slate-400 text-xs">{userLevel.name} • {teams[userTeamId].name}</div>
               </div>
             </button>
             <div className="flex items-center gap-2">
@@ -797,7 +1009,7 @@ export default function SteamhuckTracker() {
               <button onClick={() => setShowBadges(true)} className="p-2 bg-slate-700/50 rounded-lg text-yellow-400">🏅</button>
               <div className="text-right">
                 <div className={`mono text-xl font-bold ${isTeamEmir ? 'text-emerald-400' : 'text-blue-400'}`}>{getSeasonPoints(currentUser.name)}</div>
-                <div className="text-slate-400 text-xs">Bu hafta: {getWeeklyPoints(currentUser.name)}/6</div>
+                <div className={`text-xs ${getWeeklyPoints(currentUser.name) >= 6 ? 'text-green-400' : 'text-orange-400'}`}>Bu hafta: {getWeeklyPoints(currentUser.name)}/6{getWeeklyPoints(currentUser.name) < 6 ? ' ⚠️' : ' ✓'}</div>
               </div>
             </div>
           </div>
@@ -839,14 +1051,19 @@ export default function SteamhuckTracker() {
             <div className="grid grid-cols-2 gap-2 mb-4">
               {WORKOUT_TYPES.map(w => {
                 const isSelected = selectedWorkouts.includes(w.id);
+                const weekCount = getWeeklyWorkoutCount(w.id);
+                const weekLimit = w.weeklyLimit || null;
+                const limitReached = weekLimit !== null && weekCount >= weekLimit && !isSelected;
                 return (
-                  <button key={w.id} onClick={() => setSelectedWorkouts(isSelected ? selectedWorkouts.filter(id => id !== w.id) : [...selectedWorkouts, w.id])} className={`p-3 rounded-xl border-2 text-left ${isSelected ? (isTeamEmir ? 'bg-emerald-600/30 border-emerald-500' : 'bg-blue-600/30 border-blue-500') : 'bg-slate-700/50 border-slate-600'}`}>
+                  <button key={w.id} onClick={() => { if (limitReached) return; setSelectedWorkouts(isSelected ? selectedWorkouts.filter(id => id !== w.id) : [...selectedWorkouts, w.id]); }} className={`p-3 rounded-xl border-2 text-left ${isSelected ? (isTeamEmir ? 'bg-emerald-600/30 border-emerald-500' : 'bg-blue-600/30 border-blue-500') : limitReached ? 'bg-slate-800/30 border-slate-700 opacity-40 cursor-not-allowed' : 'bg-slate-700/50 border-slate-600'}`}>
                     <div className="flex items-center gap-1">
                       <span className="text-lg">{w.emoji}</span>
                       <span className={`text-sm font-bold ${isTeamEmir ? 'text-emerald-400' : 'text-blue-400'}`}>+{w.points}</span>
                       {isSelected && <span className="ml-auto">✓</span>}
+                      {limitReached && <span className="ml-auto text-xs text-red-400">Limit!</span>}
                     </div>
                     <div className="text-white text-xs mt-1">{w.name}</div>
+                    {weekLimit && <div className="text-slate-500 text-xs">{weekCount}/{weekLimit} bu hafta</div>}
                   </button>
                 );
               })}
@@ -948,9 +1165,55 @@ export default function SteamhuckTracker() {
               <button onClick={() => setShowCaptainPanel(false)} className="text-slate-400 text-2xl">×</button>
             </div>
 
-            {/* Hafta 2 Hedefleri */}
+            {/* Yeni Sezon Başlat */}
+            <div className="bg-red-500/10 rounded-xl p-4 mb-4 border border-red-500/30">
+              <h3 className="text-red-400 font-bold mb-2">🏆 Sezon Yönetimi</h3>
+              <div className="text-slate-300 text-xs mb-3">
+                <div>Mevcut sezon: <span className="text-white font-bold">{new Date(seasonStart).toLocaleDateString('tr-TR')} — {new Date(new Date(seasonStart).getTime() + 14*24*60*60*1000).toLocaleDateString('tr-TR')}</span></div>
+                <div className="mt-1">Kalan: <span className="text-purple-400 font-bold">{getDaysRemaining()} gün</span></div>
+              </div>
+              {showSeasonModal ? (
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-slate-400 text-xs mb-1 block">Yeni sezon başlangıç tarihi:</label>
+                    <input
+                      type="date"
+                      value={newSeasonDate}
+                      onChange={e => setNewSeasonDate(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-800 rounded-lg text-white text-sm"
+                    />
+                  </div>
+                  {newSeasonDate && (
+                    <div className="bg-slate-800/50 rounded-lg p-2 text-xs text-slate-300">
+                      📅 {new Date(newSeasonDate).toLocaleDateString('tr-TR')} → {new Date(new Date(newSeasonDate).getTime() + 14*24*60*60*1000).toLocaleDateString('tr-TR')}
+                      <span className="text-red-400 block mt-1">⚠️ Tüm veriler silinecek!</span>
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <button onClick={() => setShowSeasonModal(false)} className="flex-1 py-2 bg-slate-700 rounded-lg text-slate-300 text-sm">İptal</button>
+                    <button
+                      onClick={() => {
+                        if (!newSeasonDate) return;
+                        if (confirm('Yeni sezon başlatılacak ve TÜM veriler silinecek. Emin misin?')) {
+                          startNewSeason(newSeasonDate);
+                        }
+                      }}
+                      disabled={!newSeasonDate}
+                      className="flex-1 py-2 bg-red-600 rounded-lg text-white text-sm font-bold disabled:opacity-40"
+                    >🚀 Başlat</button>
+                  </div>
+                </div>
+              ) : (
+                <button onClick={() => { setNewSeasonDate(''); setShowSeasonModal(true); }} className="w-full py-2 bg-red-600/30 border border-red-500/50 text-red-400 text-sm rounded-lg hover:bg-red-600/50">
+                  🚀 Yeni Sezon Başlat
+                </button>
+              )}
+            </div>
+
+            {/* Haftalık Hedefler */}
             <div className="bg-purple-500/20 rounded-xl p-4 mb-4">
-              <h3 className="text-purple-400 font-bold mb-3">🎯 Hafta 2 Hedeflerini Belirle</h3>
+              <h3 className="text-purple-400 font-bold mb-1">🎯 Hafta {getCurrentWeekNumber()} Hedeflerini Belirle</h3>
+              <p className="text-slate-400 text-xs mb-3">Tüm takımlar için ortak hedef (3 seç)</p>
               <div className="space-y-2">
                 {WORKOUT_TYPES.map(w => {
                   const isSelected = newGoals.some(g => g.id === w.id);
@@ -964,23 +1227,130 @@ export default function SteamhuckTracker() {
                 })}
               </div>
               {newGoals.length === 3 && (
-                <button onClick={() => { saveWeeklyGoals(newGoals); setShowCaptainPanel(false); setSuccessMessage('Hafta 2 hedefleri kaydedildi!'); setShowSuccess(true); setTimeout(() => setShowSuccess(false), 1500); }} className="w-full mt-3 py-2 bg-purple-600 rounded-xl text-white font-bold">Hedefleri Kaydet</button>
+                <button onClick={() => { saveWeeklyGoals(newGoals); setShowCaptainPanel(false); setSuccessMessage(`Hafta ${getCurrentWeekNumber()} hedefleri kaydedildi!`); setShowSuccess(true); setTimeout(() => setShowSuccess(false), 1500); }} className="w-full mt-3 py-2 bg-purple-600 rounded-xl text-white font-bold">Hedefleri Kaydet</button>
               )}
               <p className="text-slate-400 text-xs mt-2 text-center">{newGoals.length}/3 seçildi</p>
             </div>
 
-            {/* Takım Durumu */}
+            {/* Takım Yönetimi */}
+            <div className="bg-slate-700/30 rounded-xl p-4 mb-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-white font-bold">⚙️ Takım Yönetimi</h3>
+                <div className="flex gap-1">
+                  <button onClick={() => setEditingTeam('team_emir')} className={`px-2 py-1 rounded-lg text-xs ${editingTeam === 'team_emir' ? 'bg-emerald-600 text-white' : 'bg-slate-600 text-slate-300'}`}>💚 {teams.team_emir.captain}</button>
+                  <button onClick={() => setEditingTeam('team_ceyhun')} className={`px-2 py-1 rounded-lg text-xs ${editingTeam === 'team_ceyhun' ? 'bg-blue-600 text-white' : 'bg-slate-600 text-slate-300'}`}>💙 {teams.team_ceyhun.captain}</button>
+                </div>
+              </div>
+
+              {/* Takım İsmi Düzenle */}
+              <div className="mb-3">
+                <p className="text-slate-400 text-xs mb-2">Takım adı:</p>
+                {editingTeamName[editingTeam] ? (
+                  <div className="flex gap-2">
+                    <input
+                      value={teamNameInput[editingTeam]}
+                      onChange={e => setTeamNameInput(prev => ({ ...prev, [editingTeam]: e.target.value }))}
+                      onKeyDown={e => e.key === 'Enter' && changeTeamName(editingTeam, teamNameInput[editingTeam])}
+                      className="flex-1 px-3 py-2 bg-slate-800 rounded-lg text-white text-sm"
+                      placeholder="Yeni takım adı..."
+                      autoFocus
+                    />
+                    <button onClick={() => changeTeamName(editingTeam, teamNameInput[editingTeam])}
+                      className={`px-3 py-2 rounded-lg text-white text-sm font-bold ${editingTeam === 'team_emir' ? 'bg-emerald-600' : 'bg-blue-600'}`}>✓</button>
+                    <button onClick={() => setEditingTeamName(prev => ({ ...prev, [editingTeam]: false }))}
+                      className="px-3 py-2 rounded-lg text-slate-300 text-sm bg-slate-600">✕</button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between bg-slate-800/50 rounded-lg px-3 py-2">
+                    <span className="text-white text-sm">{teams[editingTeam].name}</span>
+                    <button onClick={() => {
+                      setTeamNameInput(prev => ({ ...prev, [editingTeam]: teams[editingTeam].name }));
+                      setEditingTeamName(prev => ({ ...prev, [editingTeam]: true }));
+                    }} className="text-slate-400 text-xs hover:text-white">✏️ Düzenle</button>
+                  </div>
+                )}
+              </div>
+
+              {/* Kaptan Değiştir */}
+              <div className="mb-3">
+                <p className="text-slate-400 text-xs mb-2">Kaptan seç:</p>
+                <div className="flex flex-wrap gap-1">
+                  {teams[editingTeam].members.map(m => (
+                    <button key={m} onClick={() => changeCaptain(editingTeam, m)}
+                      className={`px-2 py-1 rounded-lg text-xs ${teams[editingTeam].captain === m ? (editingTeam === 'team_emir' ? 'bg-emerald-600 text-white' : 'bg-blue-600 text-white') : 'bg-slate-600 text-slate-300'}`}>
+                      {teams[editingTeam].captain === m && '👑 '}{m}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Üye Listesi */}
+              <p className="text-slate-400 text-xs mb-2">Üyeler:</p>
+              <div className="space-y-1 mb-3">
+                {teams[editingTeam].members.map(member => {
+                  const otherTeam = editingTeam === 'team_emir' ? 'team_ceyhun' : 'team_emir';
+                  return (
+                    <div key={member} className="flex items-center justify-between bg-slate-800/50 rounded-lg px-2 py-1">
+                      <span className="text-white text-sm">{member}</span>
+                      <div className="flex gap-1">
+                        <button onClick={() => moveMember(member, editingTeam, otherTeam)}
+                          className="text-xs px-2 py-1 bg-purple-600/40 text-purple-300 rounded-lg">
+                          → {editingTeam === 'team_emir' ? '💙' : '💚'}
+                        </button>
+                        {member !== 'Ceyhun' && (
+                          <button onClick={() => removeMember(member, editingTeam)}
+                            className="text-xs px-2 py-1 bg-red-600/40 text-red-300 rounded-lg">✕</button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Yeni Üye Ekle */}
+              <div className="flex gap-2">
+                <input value={newMemberName} onChange={e => setNewMemberName(e.target.value)}
+                  placeholder="Yeni üye adı..." onKeyDown={e => e.key === 'Enter' && addMember(editingTeam)}
+                  className="flex-1 px-3 py-2 bg-slate-800 rounded-lg text-white text-sm placeholder-slate-500" />
+                <button onClick={() => addMember(editingTeam)} className={`px-3 py-2 rounded-lg text-white text-sm font-bold ${editingTeam === 'team_emir' ? 'bg-emerald-600' : 'bg-blue-600'}`}>+</button>
+              </div>
+              <p className="text-red-400 text-xs mt-2 text-center">⚠️ Değişiklikler tüm verileri sıfırlar</p>
+            </div>
+
+            {/* Tüm Üyeler Özet */}
             <div className="bg-slate-700/30 rounded-xl p-4">
-              <h3 className="text-white font-bold mb-3">📊 Takım Durumu</h3>
-              {TEAMS[userTeamId].members.map(member => (
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-white font-bold">📊 Puan Durumu</h3>
+                <button onClick={() => {
+                  if (confirm('Tüm puanlar, antrenmanlar ve etiketler silinecek. Emin misin?')) {
+                    setWorkouts([]);
+                    setTags([]);
+                    setReactions([]);
+                    setMessages([]);
+                    ['steamhuckWorkouts','steamhuckTags','steamhuckReactions','steamhuckMessages','steamhuckWeeklyGoals','steamhuckWeekPenalties','steamhuckLastPenaltyCheck'].forEach(k => localStorage.removeItem(k));
+                    setSuccessMessage('Tüm puanlar sıfırlandı!');
+                    setShowSuccess(true);
+                    setTimeout(() => setShowSuccess(false), 1500);
+                  }
+                }} className="px-3 py-1 bg-red-600/30 border border-red-500/50 text-red-400 text-xs rounded-lg hover:bg-red-600/50">
+                  🗑️ Sıfırla
+                </button>
+              </div>
+              {[...teams.team_emir.members, ...teams.team_ceyhun.members].map(member => {
+                const mTeam = getUserTeam(member);
+                return (
                 <div key={member} className="flex items-center justify-between py-2 border-b border-slate-700 last:border-0">
-                  <span className="text-white text-sm">{member === TEAMS[userTeamId].captain && '👑 '}{member}</span>
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${mTeam === 'team_emir' ? 'bg-emerald-500' : 'bg-blue-500'}`}></span>
+                    <span className="text-white text-sm">{member === 'Ceyhun' && '👑 '}{member}</span>
+                  </div>
                   <div className="flex items-center gap-2">
                     <span className="text-slate-400 text-xs">Hafta: {getWeeklyPoints(member)}</span>
-                    <span className={`font-bold text-sm ${isTeamEmir ? 'text-emerald-400' : 'text-blue-400'}`}>{getSeasonPoints(member)}</span>
+                    <span className={`font-bold text-sm ${mTeam === 'team_emir' ? 'text-emerald-400' : 'text-blue-400'}`}>{getSeasonPoints(member)}</span>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
@@ -1084,7 +1454,17 @@ export default function SteamhuckTracker() {
                                 })}
                               </div>
                             </div>
-                            <div className={`mono font-bold px-2 py-1 rounded-lg text-sm ${isEmirTeam ? 'bg-emerald-500/20 text-emerald-400' : 'bg-blue-500/20 text-blue-400'}`}>+{item.data.points}</div>
+                            <div className="flex items-center gap-2">
+                              <div className={`mono font-bold px-2 py-1 rounded-lg text-sm ${isEmirTeam ? 'bg-emerald-500/20 text-emerald-400' : 'bg-blue-500/20 text-blue-400'}`}>+{item.data.points}</div>
+                              {currentUser.name === 'Ceyhun' && (
+                                <button onClick={() => {
+                                  const updated = workouts.filter(w => w.id !== item.data.id);
+                                  setWorkouts(updated);
+                                  if (isDemo) localStorage.setItem('steamhuckWorkouts', JSON.stringify(updated));
+                                  else supabase.from('workouts').delete().eq('id', item.data.id);
+                                }} className="text-red-400 text-xs px-1 hover:text-red-300">🗑️</button>
+                              )}
+                            </div>
                           </div>
                         </div>
                       );
@@ -1116,6 +1496,14 @@ export default function SteamhuckTracker() {
                                 <p className="text-sm">{item.data.status === 'defended' ? <span className="text-green-400">✅ Savunuldu +1</span> : <span className="text-red-400">❌ Başarısız -3</span>}</p>
                               )}
                             </div>
+                          {currentUser.name === 'Ceyhun' && (
+                              <button onClick={() => {
+                                const updated = tags.filter(t => t.id !== item.data.id);
+                                setTags(updated);
+                                if (isDemo) localStorage.setItem('steamhuckTags', JSON.stringify(updated));
+                                else supabase.from('tags').delete().eq('id', item.data.id);
+                              }} className="text-red-400 text-xs px-2 hover:text-red-300">🗑️</button>
+                            )}
                           </div>
                         </div>
                       );
@@ -1226,9 +1614,9 @@ export default function SteamhuckTracker() {
             <h2 className="text-xl font-bold text-white text-center">⚔️ Takım Savaşı</h2>
             <div className="bg-slate-800/50 rounded-2xl p-6 border border-purple-500/30">
               <div className="flex items-center justify-between">
-                <div className="text-center"><div className="text-3xl mb-2">💚</div><div className="text-emerald-400 font-bold">{TEAMS.team_emir.captain}</div><div className="text-emerald-300 text-3xl font-bold mono">{getTeamPoints('team_emir')}</div></div>
+                <div className="text-center"><div className="text-3xl mb-2">💚</div><div className="text-emerald-400 font-bold">{teams.team_emir.captain}</div><div className="text-emerald-300 text-3xl font-bold mono">{getTeamPoints('team_emir')}</div></div>
                 <div className="text-3xl text-purple-400">VS</div>
-                <div className="text-center"><div className="text-3xl mb-2">💙</div><div className="text-blue-400 font-bold">{TEAMS.team_ceyhun.captain}</div><div className="text-blue-300 text-3xl font-bold mono">{getTeamPoints('team_ceyhun')}</div></div>
+                <div className="text-center"><div className="text-3xl mb-2">💙</div><div className="text-blue-400 font-bold">{teams.team_ceyhun.captain}</div><div className="text-blue-300 text-3xl font-bold mono">{getTeamPoints('team_ceyhun')}</div></div>
               </div>
               <div className="mt-5 h-3 bg-slate-700 rounded-full overflow-hidden flex">
                 <div className="bg-gradient-to-r from-emerald-600 to-emerald-400" style={{ width: `${(getTeamPoints('team_emir') / (getTeamPoints('team_emir') + getTeamPoints('team_ceyhun') || 1)) * 100}%` }} />
