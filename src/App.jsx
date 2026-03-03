@@ -399,40 +399,59 @@ export default function SteamhuckTracker() {
   };
 
   const isCaptain = (userName) => {
-    return teams.team_emir.captain === userName || teams.team_ceyhun.captain === userName;
+    return userName === 'Ceyhun';
   };
 
-  const saveTeams = async (newTeams) => {
+  const saveTeams = async (newTeams, seasonStartOverride = seasonStart) => {
     setTeams(newTeams);
     localStorage.setItem('steamhuckTeams', JSON.stringify(newTeams));
 
-    if (!isDemo) {
-      const { error } = await supabase.from('app_settings').upsert({
-        id: APP_SETTINGS_ID,
-        teams_json: newTeams,
-        season_start: seasonStart
-      });
-      if (error) console.error('Takım ayarları kayıt hatası:', error);
+    if (isDemo) return true;
+
+    const { error } = await supabase.from('app_settings').upsert({
+      id: APP_SETTINGS_ID,
+      teams_json: newTeams,
+      season_start: seasonStartOverride
+    });
+
+    if (error) {
+      console.error('Takım ayarları kayıt hatası:', error);
+      return false;
     }
+
+    return true;
   };
 
-  const saveSeasonStart = async (newStart) => {
+  const saveSeasonStart = async (newStart, teamsOverride = teams) => {
     setSeasonStart(newStart);
     localStorage.setItem('steamhuckSeasonStart', newStart);
 
-    if (!isDemo) {
-      const { error } = await supabase.from('app_settings').upsert({
-        id: APP_SETTINGS_ID,
-        teams_json: teams,
-        season_start: newStart
-      });
-      if (error) console.error('Sezon ayarı kayıt hatası:', error);
+    if (isDemo) return true;
+
+    const { error } = await supabase.from('app_settings').upsert({
+      id: APP_SETTINGS_ID,
+      teams_json: teamsOverride,
+      season_start: newStart
+    });
+
+    if (error) {
+      console.error('Sezon ayarı kayıt hatası:', error);
+      return false;
     }
+
+    return true;
   };
 
   const startNewSeason = async (startDate) => {
     const newStart = new Date(startDate).toISOString();
-    await saveSeasonStart(newStart);
+    const seasonSaved = await saveSeasonStart(newStart);
+    if (!seasonSaved) {
+      setSuccessMessage('Sezon ayarı kaydedilemedi!');
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 1500);
+      return;
+    }
+
     // Tüm verileri sıfırla
     setWorkouts([]);
     setTags([]);
@@ -458,36 +477,41 @@ export default function SteamhuckTracker() {
     setTimeout(() => setShowSuccess(false), 2000);
   };
 
-  const handleTeamReset = (newTeams) => {
-    saveTeams(newTeams);
-    setWorkouts([]);
-    setTags([]);
-    setReactions([]);
-    setMessages([]);
-    ['steamhuckWorkouts', 'steamhuckTags', 'steamhuckReactions', 'steamhuckMessages', 'steamhuckWeeklyGoals', 'steamhuckWeekPenalties', 'steamhuckLastPenaltyCheck'].forEach(k => localStorage.removeItem(k));
+  const handleTeamReset = async (newTeams) => {
+    const teamsSaved = await saveTeams(newTeams);
+
+    if (!teamsSaved) {
+      setSuccessMessage('Takım güncellemesi kaydedilemedi!');
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 1500);
+      return;
+    }
+
+    if (!isDemo) await loadData();
+
     setSuccessMessage('Takım güncellendi!');
     setShowSuccess(true);
     setTimeout(() => setShowSuccess(false), 1500);
   };
 
-  const moveMember = (member, fromTeam, toTeam) => {
+  const moveMember = async (member, fromTeam, toTeam) => {
     const newTeams = {
       ...teams,
       [fromTeam]: { ...teams[fromTeam], members: teams[fromTeam].members.filter(m => m !== member) },
       [toTeam]: { ...teams[toTeam], members: [...teams[toTeam].members, member] }
     };
-    handleTeamReset(newTeams);
+    await handleTeamReset(newTeams);
   };
 
-  const removeMember = (member, teamId) => {
+  const removeMember = async (member, teamId) => {
     const newTeams = {
       ...teams,
       [teamId]: { ...teams[teamId], members: teams[teamId].members.filter(m => m !== member) }
     };
-    handleTeamReset(newTeams);
+    await handleTeamReset(newTeams);
   };
 
-  const addMember = (teamId) => {
+  const addMember = async (teamId) => {
     if (!newMemberName.trim()) return;
     const name = newMemberName.trim();
     if (teams.team_emir.members.includes(name) || teams.team_ceyhun.members.includes(name)) {
@@ -498,20 +522,21 @@ export default function SteamhuckTracker() {
       ...teams,
       [teamId]: { ...teams[teamId], members: [...teams[teamId].members, name] }
     };
-    handleTeamReset(newTeams);
+    await handleTeamReset(newTeams);
     setNewMemberName('');
   };
 
-  const changeTeamName = (teamId, newName) => {
+  const changeTeamName = async (teamId, newName) => {
     if (!newName.trim()) return;
     const newTeams = { ...teams, [teamId]: { ...teams[teamId], name: newName.trim() } };
-    saveTeams(newTeams);
+    const saved = await saveTeams(newTeams);
+    if (!saved) return;
     setEditingTeamName(prev => ({ ...prev, [teamId]: false }));
   };
 
-  const changeCaptain = (teamId, newCaptain) => {
+  const changeCaptain = async (teamId, newCaptain) => {
     const newTeams = { ...teams, [teamId]: { ...teams[teamId], captain: newCaptain, name: `${newCaptain}'in Takımı` } };
-    handleTeamReset(newTeams);
+    await handleTeamReset(newTeams);
   };
 
   const getWeekStart = () => {
@@ -549,10 +574,21 @@ export default function SteamhuckTracker() {
   };
 
 
+  const getSeasonWeekRange = (weekNumber) => {
+    const start = new Date(seasonStart);
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() + (weekNumber - 1) * 7);
+
+    const end = new Date(start);
+    end.setDate(end.getDate() + 7);
+
+    return { start, end };
+  };
+
   const getCurrentWeekNumber = () => {
     const now = new Date();
-    const week2Start = weeklyGoals.week2?.start ? new Date(weeklyGoals.week2.start) : null;
-    if (week2Start && now >= week2Start) return 2;
+    const { start: week2Start } = getSeasonWeekRange(2);
+    if (now >= week2Start) return 2;
     return 1;
   };
 
@@ -560,7 +596,13 @@ export default function SteamhuckTracker() {
     const weekNum = getCurrentWeekNumber();
     const week = weeklyGoals[`week${weekNum}`];
     if (!week || !week.goals || week.goals.length === 0) return null;
-    return week;
+
+    const range = getSeasonWeekRange(weekNum);
+    return {
+      ...week,
+      start: range.start,
+      end: range.end,
+    };
   };
 
   const checkWeeklyGoalsCompleted = (userName) => {
@@ -584,9 +626,12 @@ export default function SteamhuckTracker() {
     const week = weeklyGoals[weekKey];
     if (!week || !week.goals || week.goals.length === 0) return false;
 
+    const weekNumber = Number(weekKey.replace('week', ''));
+    const { start, end } = getSeasonWeekRange(weekNumber);
+
     const userWorkoutsThisWeek = workouts.filter(w => {
       const wDate = new Date(w.created_at);
-      return w.user_name === userName && wDate >= new Date(week.start) && wDate < new Date(week.end);
+      return w.user_name === userName && wDate >= start && wDate < end;
     });
 
     return week.goals.every(goal =>
@@ -931,6 +976,45 @@ export default function SteamhuckTracker() {
     setShowTagModal(false);
     setTagTarget(null);
     setTimeout(() => setShowSuccess(false), 1500);
+  };
+
+  const deleteWorkoutEntry = async (workoutId) => {
+    const updatedWorkouts = workouts.filter(w => w.id !== workoutId);
+    setWorkouts(updatedWorkouts);
+
+    if (isDemo) {
+      localStorage.setItem('steamhuckWorkouts', JSON.stringify(updatedWorkouts));
+      return;
+    }
+
+    const { error: workoutDeleteError } = await supabase.from('workouts').delete().eq('id', workoutId);
+    if (workoutDeleteError) {
+      console.error('Workout silme hatası:', workoutDeleteError);
+      await loadData();
+      return;
+    }
+
+    await supabase.from('reactions').delete().eq('workout_id', workoutId);
+    await loadData();
+  };
+
+  const deleteTagEntry = async (tagId) => {
+    const updatedTags = tags.filter(t => t.id !== tagId);
+    setTags(updatedTags);
+
+    if (isDemo) {
+      localStorage.setItem('steamhuckTags', JSON.stringify(updatedTags));
+      return;
+    }
+
+    const { error } = await supabase.from('tags').delete().eq('id', tagId);
+    if (error) {
+      console.error('Tag silme hatası:', error);
+      await loadData();
+      return;
+    }
+
+    await loadData();
   };
 
   const handleLogin = (name) => {
@@ -1421,7 +1505,7 @@ export default function SteamhuckTracker() {
                   className="flex-1 px-3 py-2 bg-slate-800 rounded-lg text-white text-sm placeholder-slate-500" />
                 <button onClick={() => addMember(editingTeam)} className={`px-3 py-2 rounded-lg text-white text-sm font-bold ${editingTeam === 'team_emir' ? 'bg-emerald-600' : 'bg-blue-600'}`}>+</button>
               </div>
-              <p className="text-red-400 text-xs mt-2 text-center">⚠️ Değişiklikler tüm verileri sıfırlar</p>
+              <p className="text-slate-400 text-xs mt-2 text-center">Takım değişiklikleri artık verileri sıfırlamaz.</p>
             </div>
 
             {/* Tüm Üyeler Özet */}
@@ -1564,12 +1648,7 @@ export default function SteamhuckTracker() {
                             <div className="flex items-center gap-2">
                               <div className={`mono font-bold px-2 py-1 rounded-lg text-sm ${isEmirTeam ? 'bg-emerald-500/20 text-emerald-400' : 'bg-blue-500/20 text-blue-400'}`}>+{item.data.points}</div>
                               {userIsCaptain && (
-                                <button onClick={() => {
-                                  const updated = workouts.filter(w => w.id !== item.data.id);
-                                  setWorkouts(updated);
-                                  if (isDemo) localStorage.setItem('steamhuckWorkouts', JSON.stringify(updated));
-                                  else supabase.from('workouts').delete().eq('id', item.data.id);
-                                }} className="text-red-400 text-xs px-1 hover:text-red-300">🗑️</button>
+                                <button onClick={() => deleteWorkoutEntry(item.data.id)} className="text-red-400 text-xs px-1 hover:text-red-300">🗑️</button>
                               )}
                             </div>
                           </div>
@@ -1604,12 +1683,7 @@ export default function SteamhuckTracker() {
                               )}
                             </div>
                           {userIsCaptain && (
-                              <button onClick={() => {
-                                const updated = tags.filter(t => t.id !== item.data.id);
-                                setTags(updated);
-                                if (isDemo) localStorage.setItem('steamhuckTags', JSON.stringify(updated));
-                                else supabase.from('tags').delete().eq('id', item.data.id);
-                              }} className="text-red-400 text-xs px-2 hover:text-red-300">🗑️</button>
+                              <button onClick={() => deleteTagEntry(item.data.id)} className="text-red-400 text-xs px-2 hover:text-red-300">🗑️</button>
                             )}
                           </div>
                         </div>
