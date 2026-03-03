@@ -156,11 +156,6 @@ export default function SteamhuckTracker() {
     return () => clearInterval(interval);
   }, []);
 
-  // Hafta bitince ceza kontrolü - sadece veri ilk yüklenince çalış
-  useEffect(() => {
-    if (workouts.length > 0 && !dataLoading) applyWeeklyPenalties(workouts, teams);
-  }, [dataLoading]);
-
   // 48 saat geçen etiketleri kontrol et
   useEffect(() => {
     if (tags.length === 0) return;
@@ -600,9 +595,44 @@ export default function SteamhuckTracker() {
   };
 
   const getWeeklyMinPenalty = (userName) => {
-    // localStorage'da saklanan kalıcı cezaları oku
-    const stored = JSON.parse(localStorage.getItem('steamhuckWeekPenalties') || '{}');
-    return (stored[userName] || 0);
+    const seasonStartDate = new Date(seasonStart);
+    seasonStartDate.setHours(0, 0, 0, 0);
+
+    const seasonEndDate = new Date(seasonStartDate);
+    seasonEndDate.setDate(seasonEndDate.getDate() + SEASON_DURATION_DAYS);
+
+    // Sezonda hiç antrenman yoksa ceza verme (ilk kurulumda eksi puanı önler)
+    const hasAnySeasonWorkout = workouts.some(w => {
+      const d = new Date(w.created_at);
+      return d >= seasonStartDate && d < seasonEndDate;
+    });
+    if (!hasAnySeasonWorkout) return 0;
+
+    const now = new Date();
+    const calcUntil = now < seasonEndDate ? now : seasonEndDate;
+
+    let penalty = 0;
+    let weekStart = new Date(seasonStartDate);
+
+    // Sadece tamamlanmış haftaları cezalandır
+    while (true) {
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekEnd.getDate() + 7);
+
+      if (weekEnd > calcUntil) break;
+
+      const weekPoints = workouts
+        .filter(w => {
+          const d = new Date(w.created_at);
+          return w.user_name === userName && d >= weekStart && d < weekEnd;
+        })
+        .reduce((sum, w) => sum + w.points, 0);
+
+      if (weekPoints < 6) penalty += 3;
+      weekStart = weekEnd;
+    }
+
+    return penalty;
   };
 
   const applyWeeklyPenalties = (currentWorkouts, currentTeams) => {
@@ -654,12 +684,28 @@ export default function SteamhuckTracker() {
   };
 
   const getSeasonPoints = (userName) => {
+    const seasonStartDate = new Date(seasonStart);
+    seasonStartDate.setHours(0, 0, 0, 0);
+
+    const seasonEndDate = new Date(seasonStartDate);
+    seasonEndDate.setDate(seasonEndDate.getDate() + SEASON_DURATION_DAYS);
+
     const basePoints = workouts
-      .filter(w => w.user_name === userName && new Date(w.created_at) >= new Date(seasonStart))
+      .filter(w => {
+        const d = new Date(w.created_at);
+        return w.user_name === userName && d >= seasonStartDate && d < seasonEndDate;
+      })
       .reduce((sum, w) => sum + w.points, 0);
 
-    const tagBonus = tags.filter(t => t.target_user === userName && t.status === 'defended').length;
-    const tagPenalty = tags.filter(t => t.target_user === userName && t.status === 'failed').length * 3;
+    const tagBonus = tags.filter(t => {
+      const d = new Date(t.created_at);
+      return t.target_user === userName && t.status === 'defended' && d >= seasonStartDate && d < seasonEndDate;
+    }).length;
+
+    const tagPenalty = tags.filter(t => {
+      const d = new Date(t.created_at);
+      return t.target_user === userName && t.status === 'failed' && d >= seasonStartDate && d < seasonEndDate;
+    }).length * 3;
 
     // Her hafta ayrı ayrı +3 — tamamlandığında kalıcı
     const weeklyGoalBonus = Object.keys(weeklyGoals).reduce((sum, weekKey) => {
