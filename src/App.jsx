@@ -235,24 +235,17 @@ export default function SteamhuckTracker() {
           if (hasValidTeams) {
             setTeams(dbTeams);
           } else {
-            await supabase.from('app_settings').upsert({
-              id: APP_SETTINGS_ID,
-              teams_json: DEFAULT_TEAMS,
-              season_start: settingsRes.data.season_start || DEFAULT_SEASON_START
-            });
-            setTeams(DEFAULT_TEAMS);
+            console.error('App settings teams_json geçersiz, otomatik default yazma atlandı.');
           }
 
           if (settingsRes.data.season_start) setSeasonStart(settingsRes.data.season_start);
         } else {
-          // İlk kurulumda varsayılan ayarları oluştur
+          // İlk kurulumda satır yoksa mevcut local state ile oluştur
           await supabase.from('app_settings').upsert({
             id: APP_SETTINGS_ID,
-            teams_json: DEFAULT_TEAMS,
-            season_start: DEFAULT_SEASON_START
+            teams_json: teams,
+            season_start: seasonStart
           });
-          setTeams(DEFAULT_TEAMS);
-          setSeasonStart(DEFAULT_SEASON_START);
         }
       } catch (err) {
         console.error('App settings yükleme hatası:', err);
@@ -402,17 +395,16 @@ export default function SteamhuckTracker() {
     return userName === 'Ceyhun';
   };
 
-  const saveTeams = async (newTeams, seasonStartOverride = seasonStart) => {
+  const saveTeams = async (newTeams) => {
     setTeams(newTeams);
     localStorage.setItem('steamhuckTeams', JSON.stringify(newTeams));
 
     if (isDemo) return true;
 
-    const { error } = await supabase.from('app_settings').upsert({
-      id: APP_SETTINGS_ID,
-      teams_json: newTeams,
-      season_start: seasonStartOverride
-    });
+    const { error } = await supabase
+      .from('app_settings')
+      .update({ teams_json: newTeams, updated_at: new Date().toISOString() })
+      .eq('id', APP_SETTINGS_ID);
 
     if (error) {
       console.error('Takım ayarları kayıt hatası:', error);
@@ -422,17 +414,16 @@ export default function SteamhuckTracker() {
     return true;
   };
 
-  const saveSeasonStart = async (newStart, teamsOverride = teams) => {
+  const saveSeasonStart = async (newStart) => {
     setSeasonStart(newStart);
     localStorage.setItem('steamhuckSeasonStart', newStart);
 
     if (isDemo) return true;
 
-    const { error } = await supabase.from('app_settings').upsert({
-      id: APP_SETTINGS_ID,
-      teams_json: teamsOverride,
-      season_start: newStart
-    });
+    const { error } = await supabase
+      .from('app_settings')
+      .update({ season_start: newStart, updated_at: new Date().toISOString() })
+      .eq('id', APP_SETTINGS_ID);
 
     if (error) {
       console.error('Sezon ayarı kayıt hatası:', error);
